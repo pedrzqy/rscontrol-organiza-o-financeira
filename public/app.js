@@ -247,8 +247,8 @@
         chave = d.dia.slice(0, 7); rotulo = d.dia.slice(5, 7) + '/' + d.dia.slice(2, 4);
       }
       var g = grupos.length && grupos[grupos.length - 1].chave === chave ? grupos[grupos.length - 1] : null;
-      if (!g) { g = { chave: chave, rotulo: rotulo, dia: d.dia, bruto: 0, liquido: 0, pedidos: 0, criados: 0, despesas: 0 }; grupos.push(g); }
-      ['bruto', 'liquido', 'pedidos', 'criados', 'despesas'].forEach(function (k) { g[k] += d[k] || 0; });
+      if (!g) { g = { chave: chave, rotulo: rotulo, dia: d.dia, bruto: 0, liquido: 0, pedidos: 0, criados: 0, despesas: 0, custo: 0 }; grupos.push(g); }
+      ['bruto', 'liquido', 'pedidos', 'criados', 'despesas', 'custo'].forEach(function (k) { g[k] += d[k] || 0; });
     });
     return grupos;
   }
@@ -257,7 +257,7 @@
     var m = E.serieMedida;
     var atual = agrupar(j.serie, j.periodo.dias);
     var antes = agrupar(j.serieAnterior, j.periodo.dias);
-    var valor = function (d) { return m === 'pedidos' ? d.pedidos : m === 'lucro' ? d.liquido - d.despesas : d[m]; };
+    var valor = function (d) { return m === 'pedidos' ? d.pedidos : m === 'lucro' ? d.liquido - d.despesas - (d.custo || 0) : d[m]; };
     var dinheiro = m !== 'pedidos';
     var azul = cor('azul');
     grafico('g-serie', {
@@ -294,7 +294,7 @@
   function desenharMargem(j, filtrado) {
     var atual = agrupar(j.serie, j.periodo.dias);
     var antes = agrupar(j.serieAnterior, j.periodo.dias);
-    var margem = function (d) { return d && d.bruto ? Math.round(((filtrado ? d.liquido : d.liquido - d.despesas) / d.bruto) * 1000) / 10 : null; };
+    var margem = function (d) { return d && d.bruto ? Math.round(((filtrado ? d.liquido : d.liquido - d.despesas) - (d.custo || 0)) / d.bruto * 1000) / 10 : null; };
     var verde = cor('azul');
     grafico('g-margem', {
       type: 'line',
@@ -436,6 +436,60 @@
     return '<div class="faixa ' + classe + '"><span class="ico">' + icone(ico) + '</span><b>' + valor + '</b><small>' + rotulo + '</small></div>';
   }
 
+  var yuan = function (v) { return '¥' + (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 }); };
+  var diaBR = function (ymd) { return ymd.split('-').reverse().join('/'); };
+
+  /** Líquido − custo dos jogos no Taobao − outras despesas, a partir da data em que o custo por venda vale. */
+  function cartaoLucroReal(a, b, filtrado) {
+    var c = a.custo;
+    var cot = c.cotacao.toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+    return '<div class="cartao-g col-8"><div class="cartao-cab"><h3>Lucro real das vendas</h3>' +
+        '<small>custo por venda desde ' + diaBR(c.desde) + ' · <button class="link toque" id="mudar-desde">mudar</button></small></div>' +
+      '<div class="mini-kpis conta-lucro">' +
+        '<div><span>Líquido das vendas</span><b>' + brl(a.liquido) + '</b><small>depois das taxas</small></div>' +
+        '<div><span>− Custo dos jogos</span><b>' + brl(c.reais) + '</b><small>' + yuan(c.yuan) + ' · R$ ' + cot + ' por ¥1 · ' + inteiro(c.pedidos) + ' pedidos</small></div>' +
+        (filtrado ? '' : '<div><span>− Outras despesas</span><b>' + brl(a.outrasDespesas) + '</b><small>' + (a.compraContas ? 'fora ' + brl(a.compraContas) + ' de compra de contas' : 'tudo menos compra de contas') + '</small></div>') +
+        '<div class="total-lucro"><span>= Lucro real</span><b class="' + (a.lucro < 0 ? 'negativo' : '') + '">' + brl(a.lucro) + '</b><small>' + delta(a.lucro, b.lucro) + ' ' + pct(a.bruto ? a.lucro / a.bruto : 0) + ' do faturamento</small></div>' +
+      '</div>' +
+      (c.semCusto ? '<button class="alerta-custo toque" id="ver-sem-custo">' + inteiro(c.semCusto) + (c.semCusto === 1 ? ' pedido pago está' : ' pedidos pagos estão') + ' sem custo completo<span>Escolher os jogos</span></button>' : '') +
+      (!c.estoque ? '<p class="ajuda">Os preços vêm do painel de estoque. Suba a versão do estoque com Custos Taobao para o custo aparecer.</p>' : '') +
+      '<p class="ajuda">Pedidos antes de ' + diaBR(c.desde) + ' não entram no custo: o que foi pago ao fornecedor até lá já está em "Compra de contas".</p>' +
+    '</div>';
+  }
+
+  /** O que entrou no estoque, pelo preço de tabela, contra o que foi lançado como compra de contas. */
+  function cartaoConferencia(c) {
+    var dif = c.diferenca;
+    var bate = Math.abs(dif) < Math.max(5, c.esperado * 0.02);
+    var texto = !c.contas && !c.pago ? 'Nada no período' : bate ? 'Bate com a tabela' : dif > 0 ? 'Cobrou a mais' : 'Cobrou a menos';
+    return '<div class="cartao-g col-4"><div class="cartao-cab"><h3>Conferência do fornecedor</h3><small>desde ' + diaBR(c.desde) + '</small></div>' +
+      '<div class="mini-kpis">' +
+        '<div><span>Contas que entraram</span><b>' + inteiro(c.contas) + '</b><small>no estoque, pelo painel</small></div>' +
+        '<div><span>Deveria custar</span><b>' + brl(c.esperado) + '</b><small>' + yuan(c.esperadoYuan) + ' pela tabela</small></div>' +
+        '<div><span>Lançado</span><b>' + brl(c.pago) + '</b><small>em compra de contas</small></div>' +
+        '<div><span>' + texto + '</span><b class="' + (!bate && dif > 0 ? 'negativo' : '') + '">' + brl(Math.abs(dif)) + '</b><small>' + (bate ? 'diferença pequena' : 'diferença') + '</small></div>' +
+      '</div>' +
+      (c.semPreco ? '<p class="ajuda">' + inteiro(c.semPreco) + (c.semPreco === 1 ? ' conta é de jogo sem preço e ficou' : ' contas são de jogos sem preço e ficaram') + ' fora do "deveria custar". Ponha o preço em Custos Taobao no painel de estoque.</p>' : '') +
+    '</div>';
+  }
+
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('#ver-sem-custo')) {
+      E.status = 'semcusto';
+      irPara('pedidos');
+      return;
+    }
+    if (!e.target.closest('#mudar-desde') || !E.resumo) return;
+    abrirDialogo('<h3>Custo por venda a partir de</h3><p>Pedidos dessa data em diante descontam o custo de cada jogo no lucro real. A partir dela, "Compra de contas" sai do lucro e serve só para conferir o fornecedor.</p>' +
+      '<div class="form-lanc"><input id="desde-data" type="date" class="campo-entrada" value="' + E.resumo.atual.custo.desde + '">' +
+      '<button class="btn primario grande cheio toque" id="desde-salvar">Salvar</button><button class="btn cheio toque" data-fechar-dialogo>Cancelar</button></div>');
+    $('desde-salvar').addEventListener('click', function () {
+      api('PUT', '/api/custos/desde', { data: $('desde-data').value })
+        .then(function () { fecharDialogo(); aviso('Data salva'); carregarGeral(); })
+        .catch(function (err) { aviso(err.message, true); });
+    });
+  });
+
   function carregarGeral() {
     var alvo = $('geral');
     if (!alvo.innerHTML) alvo.innerHTML = '<div class="kpis">' + new Array(5).join('<div class="esqueleto"></div>') + '</div>';
@@ -481,6 +535,8 @@
         '</div>' +
       '</div>';
 
+      html += '<div class="painel-grade">' + cartaoLucroReal(a, b, filtrado) + (filtrado ? '' : cartaoConferencia(j.conferencia)) + '</div>';
+
       var totalJogos = j.topJogos.reduce(function (s, t) { return s + t.receita; }, 0) || 1;
       html += '<div class="painel-grade">' +
         '<div class="cartao-g col-8"><div class="cartao-cab"><h3>Jogos que mais faturaram</h3><span class="mais">···</span></div>' +
@@ -498,7 +554,7 @@
         '<div class="cartao-g col-4"><div class="cartao-cab"><h3>Quanto vai para cada conta</h3><span class="mais">···</span></div>' + cartoesSocios(dv) + '</div>' +
       '</div>';
 
-      var margemDe = function (x) { return x.bruto ? (filtrado ? x.liquido : x.lucro) / x.bruto : 0; };
+      var margemDe = function (x) { return x.bruto ? x.lucro / x.bruto : 0; };
       var mAtual = margemDe(a), mAntes = margemDe(b);
       var dpp = (mAtual - mAntes) * 100;
       var deltaM = !b.bruto ? '' : Math.abs(dpp) < 0.05 ? '<span class="delta igual">=</span>'
@@ -507,7 +563,7 @@
         '<div class="cartao-g col-8 margem"><div class="margem-topo"><div><div class="rotulo-m">' + (filtrado ? 'Margem líquida' : 'Margem de lucro') + '</div>' +
           '<div class="grande-m' + (mAtual < 0 ? ' negativo' : '') + '">' + pct(mAtual) + '</div>' +
           '<div class="kpi-pe">' + deltaM + '<span class="detalhe">antes ' + pct(mAntes) + '</span></div></div>' +
-          '<small class="explica-m">' + (filtrado ? 'Quanto do faturamento sobra depois das taxas.' : 'Quanto do faturamento sobra depois das taxas e das despesas.') + '</small></div>' +
+          '<small class="explica-m">' + (filtrado ? 'Quanto do faturamento sobra depois das taxas e do custo dos jogos.' : 'Quanto do faturamento sobra depois das taxas, do custo dos jogos e das despesas.') + '</small></div>' +
           '<div class="area-grafico media"><canvas id="g-margem"></canvas></div></div>' +
         '<div class="cartao-g col-4"><div class="cartao-cab"><h3>Outros números</h3><span class="mais">···</span></div><div class="mini-kpis">' +
         '<div><span>Aguardando pagamento</span><b>' + brl(a.abertosValor) + '</b><small>' + inteiro(a.abertos) + ' pedidos parados</small></div>' +
@@ -645,7 +701,8 @@
     return '<button class="linha pedido toque" data-i="' + i + '"><span><span class="nome">' + esc(p.cliente || 'Cliente') + '</span>' +
       '<span class="meta">' + tagPedido(p) + '<span class="tag">' + (NOME_METODO[p.metodo] || esc(p.metodo)) + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '') + '</span>' + dataBR(p.criado_em, true) + '</span>' +
       '<span class="meta">' + esc(jogos) + '</span></span>' +
-      '<span class="valor-lado"><b>' + brl(p.total) + '</b>' + (p.liquido != null ? '<small>líq. ' + brl(p.liquido) + '</small>' : '') + '</span></button>';
+      '<span class="valor-lado"><b>' + brl(p.total) + '</b>' + (p.liquido != null ? '<small>líq. ' + brl(p.liquido) + '</small>' : '') +
+      (p.custo ? (p.custo.completo ? '<small>custo ' + brl(p.custo.reais) + '</small>' : '<small class="sem-custo">sem custo</small>') : '') + '</span></button>';
   }
 
   function filtroQuery() {
@@ -698,7 +755,7 @@
   }
 
   var FILTROS_PEDIDOS = [
-    { chave: 'status', titulo: 'Situação', padrao: 'pago', opcoes: [['pago', 'Pagos'], ['aberto', 'Aguardando pagamento'], ['cancelado', 'Cancelados'], ['', 'Todos']] },
+    { chave: 'status', titulo: 'Situação', padrao: 'pago', opcoes: [['pago', 'Pagos'], ['semcusto', 'Pagos sem custo'], ['aberto', 'Aguardando pagamento'], ['cancelado', 'Cancelados'], ['', 'Todos']] },
     { chave: 'metodo', titulo: 'Forma de pagamento', padrao: '', opcoes: [['', 'Pix e cartão'], ['pix', 'Pix'], ['card', 'Cartão']] },
   ];
 
@@ -775,8 +832,89 @@
         linha('Aparelho', esc(p.dispositivo)) +
         linha('Código', '<span class="mono">' + esc(p.numero) + '</span>') +
         '</div>';
+      if (j.custo) html = blocoCusto(p, j.custo) + html;
       $('folha-corpo').innerHTML = html;
+      var esc1 = $('escolher-jogos');
+      if (esc1) esc1.addEventListener('click', function () { escolherJogos(resumo, j.custo); });
+      var auto = $('custo-auto');
+      if (auto) auto.addEventListener('click', function () {
+        api('DELETE', '/api/pedidos/' + encodeURIComponent(p.numero) + '/custo')
+          .then(function () { aviso('Voltou ao automático'); abrirPedido(resumo); carregarPedidos(false); })
+          .catch(function (err) { aviso(err.message, true); });
+      });
     }).catch(function (err) { $('folha-corpo').innerHTML = '<p class="vazio">' + esc(err.message) + '</p>'; });
+  }
+
+  var FONTE_CUSTO = { manual: 'Jogos escolhidos aqui', entrega: 'Entrega do painel de estoque', tabela: 'Preço de tabela dos itens' };
+
+  function blocoCusto(p, c) {
+    var linha = function (r, v) { return '<div><span>' + r + '</span><b>' + v + '</b></div>'; };
+    var lucro = p.liquido != null ? p.liquido - c.reais : null;
+    return '<div class="grupo-titulo">Custo no fornecedor</div><div class="detalhe-lista">' +
+      (c.jogos.length ? c.jogos.map(function (g) {
+        return linha(esc(nomeLimpo(g.nome)), g.yuan == null ? '<span class="sem-custo">sem preço</span>' : yuan(g.yuan) + ' · ' + brl(g.yuan * c.cotacao));
+      }).join('') : linha('Jogos', '<span class="sem-custo">não sei quais saíram</span>')) +
+      linha('Custo total', brl(c.reais) + ' · ' + yuan(c.yuan) + (c.completo ? '' : ' <span class="sem-custo">incompleto</span>')) +
+      (lucro != null && c.completo ? linha('Lucro do pedido', '<span class="' + (lucro < 0 ? 'sem-custo' : 'tag pago') + '">' + brl(lucro) + '</span>') : '') +
+      linha('De onde', FONTE_CUSTO[c.fonte] || c.fonte) +
+      (c.conta ? '' : linha('Lucro real', 'não entra (antes de ' + diaBR(c.desde) + ')')) +
+      '</div>' +
+      '<div class="acoes-custo"><button class="btn cheio toque" id="escolher-jogos">' + (c.fonte === 'manual' ? 'Trocar os jogos' : 'Escolher os jogos que saíram') + '</button>' +
+      (c.fonte === 'manual' ? '<button class="btn cheio toque" id="custo-auto">Voltar ao automático</button>' : '') + '</div>';
+  }
+
+  /** Para combo ou pedido entregue por fora: marca quais jogos saíram, e o custo vem do preço de cada um. */
+  function escolherJogos(resumo, custo) {
+    var marcados = custo.fonte === 'manual' ? custo.jogos.map(function (g) { return g.produto; }) : [];
+    abrirDialogo('<h3>Jogos que saíram</h3><p>Marque os jogos que o cliente levou neste pedido. O custo vem do preço de cada um no painel de estoque.</p><div class="grupo"><div class="esqueleto"></div></div>');
+    api('GET', '/api/custos/jogos').then(function (j) {
+      var porId = {};
+      j.jogos.forEach(function (g) { porId[g.id] = g; });
+      function total() { return marcados.reduce(function (s, id) { return s + (porId[id] ? porId[id].yuan : 0); }, 0); }
+      $('dialogo').innerHTML = '<h3>Jogos que saíram</h3>' +
+        '<p>Toque para marcar. Se o mesmo jogo saiu duas vezes, use o +.</p>' +
+        '<div id="escolhidos" class="escolhidos"></div>' +
+        '<label class="busca"><svg class="icone p"><use href="#i-busca"/></svg><input id="busca-jogo" type="search" placeholder="Buscar jogo" autocomplete="off"></label>' +
+        '<div class="lista-jogos" id="lista-jogos"></div>' +
+        '<button class="btn primario grande cheio toque" id="salvar-jogos">Salvar</button><button class="btn cheio toque" data-fechar-dialogo>Cancelar</button>';
+      function desenhar() {
+        var q = $('busca-jogo').value.trim().toLowerCase();
+        $('escolhidos').innerHTML = marcados.length
+          ? marcados.map(function (id, i) { return '<button class="pilula toque" data-tirar="' + i + '">' + esc(nomeLimpo(porId[id] ? porId[id].nome : 'Jogo ' + id)) + icone('fechar', 'p') + '</button>'; }).join('') +
+            '<span class="total-escolha">' + yuan(total()) + ' · ' + brl(total() * j.cotacao) + '</span>'
+          : '<span class="ajuda">Nenhum jogo marcado.</span>';
+        $('lista-jogos').innerHTML = j.jogos.filter(function (g) { return !q || g.nome.toLowerCase().indexOf(q) >= 0; }).slice(0, 80).map(function (g) {
+          var n = marcados.filter(function (x) { return x === g.id; }).length;
+          return '<div class="jogo-escolha' + (n ? ' ativo' : '') + '"><button class="toque" data-marcar="' + g.id + '"><span>' + esc(nomeLimpo(g.nome)) + '</span><small>' + yuan(g.yuan) + '</small></button>' +
+            '<button class="mais-um toque" data-mais="' + g.id + '" aria-label="Mais um">+' + (n > 1 ? n : '') + '</button></div>';
+        }).join('') || '<p class="vazio">Nenhum jogo com preço.</p>';
+      }
+      desenhar();
+      $('busca-jogo').addEventListener('input', desenhar);
+      $('dialogo').onclick = function (e) {
+        var m = e.target.closest('[data-marcar]');
+        var mais = e.target.closest('[data-mais]');
+        var tirar = e.target.closest('[data-tirar]');
+        if (m) {
+          var id = Number(m.getAttribute('data-marcar'));
+          var i = marcados.indexOf(id);
+          if (i >= 0) marcados = marcados.filter(function (x) { return x !== id; });
+          else marcados.push(id);
+          desenhar();
+        } else if (mais) {
+          marcados.push(Number(mais.getAttribute('data-mais')));
+          desenhar();
+        } else if (tirar) {
+          marcados.splice(Number(tirar.getAttribute('data-tirar')), 1);
+          desenhar();
+        } else if (e.target.closest('#salvar-jogos')) {
+          if (!marcados.length) { aviso('Marque pelo menos um jogo', true); return; }
+          api('POST', '/api/pedidos/' + encodeURIComponent(resumo.numero) + '/custo', { produtos: marcados })
+            .then(function () { fecharDialogo(); aviso('Custo do pedido salvo'); abrirPedido(resumo); if (E.vista === 'pedidos') carregarPedidos(false); })
+            .catch(function (err) { aviso(err.message, true); });
+        }
+      };
+    }).catch(function (err) { aviso(err.message, true); fecharDialogo(); });
   }
 
   // ─── a receber ─────────────────────────────────────────────────────

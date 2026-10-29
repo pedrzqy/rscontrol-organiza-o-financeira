@@ -24,6 +24,17 @@ do celular como app (sem notificações).
 - **Quanto vai para cada conta:** para Pedro e para Arthur, parte do lucro já
   liberado (divisão configurável, padrão 50/50) + despesas que pagou do bolso +
   aportes − retiradas. Mostra também quanto entra quando o cartão liberar.
+- **Lucro real das vendas:** líquido − custo dos jogos no fornecedor (Taobao) −
+  outras despesas. Vale a partir de uma data (padrão 29/10/2026, muda em "mudar"):
+  dessa data em diante, "Compra de contas" sai do lucro, porque o custo já vem de
+  cada venda. O acerto entre os sócios continua pelo dinheiro que entrou e saiu.
+- **Conferência do fornecedor:** contas que entraram no estoque pelo painel × preço
+  de tabela, contra o que foi lançado em "Compra de contas". Mostra se o fornecedor
+  cobrou a mais ou a menos.
+- **Custo de cada pedido:** jogos escolhidos à mão aqui > entrega do painel de
+  estoque (pega os jogos certos do combo) > preço de tabela dos itens. Combo sem
+  entrega fica "sem custo" até você escolher os jogos no detalhe do pedido (ou pelo
+  filtro "Pagos sem custo").
 
 ## De onde vêm os números
 
@@ -49,5 +60,5 @@ DATABASE_URL=
    `"configurado":true,"banco":true`. A primeira cópia completa dos pedidos leva
    uns 5 minutos.
 
-Usa o mesmo banco do painel de estoque (tabelas `fin_*`) e os mesmos certificados
+Usa o mesmo banco do painel de estoque (tabelas `fin_*`, e lê `custos`, `ajustes`, `entregas` e `contas` do estoque) e os mesmos certificados
 da pasta `certificados/`. Não compartilhe o zip.

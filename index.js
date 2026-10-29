@@ -15,6 +15,7 @@ const banco = require('./banco');
 const sync = require('./sync');
 const lancamentos = require('./lancamentos');
 const analise = require('./analise');
+const custos = require('./custos');
 
 const USUARIO = (process.env.FIN_USUARIO || '').trim();
 const SENHA = (process.env.FIN_SENHA || '').trim();
@@ -76,8 +77,8 @@ const falhou = (res, e) => {
 // ─── periodo ─────────────────────────────────────────────────────────
 
 const dataValida = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) && !Number.isNaN(Date.parse(s));
-function hojeBR() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: FUSO }).format(new Date());
+function hojeBR(quando) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: FUSO }).format(quando ? new Date(quando) : new Date());
 }
 function periodo(req) {
   const ate = dataValida(req.query.ate) ? req.query.ate : hojeBR();
@@ -181,7 +182,7 @@ function filtroPedidos(req) {
   const onde = [JANELA];
   const args = [p.de, p.ate];
   const st = String(req.query.status || '');
-  if (st === 'pago') onde.push('pago');
+  if (st === 'pago' || st === 'semcusto') onde.push('pago');
   else if (st === 'aberto') onde.push("NOT pago AND pagamento = 'pending'");
   else if (st === 'cancelado') onde.push("NOT pago AND pagamento <> 'pending'");
   const metodo = String(req.query.metodo || '');
@@ -198,16 +199,31 @@ function filtroPedidos(req) {
   return { onde: onde.join(' AND '), args };
 }
 
+/** Custo do fornecedor dos pedidos pagos a partir da data em que o custo por venda passou a valer. */
+async function comCusto(pedidos) {
+  const cfg = await custos.config();
+  const contam = pedidos.filter((p) => p.pago && hojeBR(p.criado_em) >= cfg.desde);
+  const c = await custos.dosPedidos(contam);
+  return pedidos.map((p) => {
+    const x = c[p.numero];
+    return x ? Object.assign({}, p, { custo: { reais: x.yuan * cfg.cotacao, yuan: x.yuan, completo: x.completo, fonte: x.fonte } }) : p;
+  });
+}
+
+const SQL_LISTA = 'SELECT numero, nerix_id, criado_em, status, pagamento, metodo, pago, total, liquido, taxas, parcelas, cliente, itens FROM fin_pedidos';
+const numeros = (r) => Object.assign({}, r, { total: n(r.total), liquido: r.liquido == null ? null : n(r.liquido), taxas: r.taxas == null ? null : n(r.taxas) });
+
 app.get('/api/pedidos', async (req, res) => {
   try {
     const { onde, args } = filtroPedidos(req);
     const pagina = Math.max(1, Math.min(200, Number(req.query.pagina) || 1));
+    if (req.query.status === 'semcusto') {
+      const todos = await comCusto((await banco.q(`${SQL_LISTA} WHERE ${onde} ORDER BY criado_em DESC LIMIT 3000`, args)).rows.map(numeros));
+      const sem = todos.filter((p) => p.custo && !p.custo.completo);
+      return res.json({ ok: true, pagina, total: sem.length, bruto: sem.reduce((s, p) => s + p.total, 0), pedidos: sem.slice((pagina - 1) * 50, pagina * 50) });
+    }
     const [lista, total] = await Promise.all([
-      banco.q(
-        `SELECT numero, nerix_id, criado_em, status, pagamento, metodo, pago, total, liquido, taxas, parcelas, cliente, itens
-           FROM fin_pedidos WHERE ${onde} ORDER BY criado_em DESC LIMIT 50 OFFSET ${(pagina - 1) * 50}`,
-        args,
-      ),
+      banco.q(`${SQL_LISTA} WHERE ${onde} ORDER BY criado_em DESC LIMIT 50 OFFSET ${(pagina - 1) * 50}`, args),
       banco.q(`SELECT count(*)::int AS n, coalesce(sum(total) FILTER (WHERE pago), 0) AS bruto FROM fin_pedidos WHERE ${onde}`, args),
     ]);
     res.json({
@@ -215,7 +231,7 @@ app.get('/api/pedidos', async (req, res) => {
       pagina,
       total: total.rows[0].n,
       bruto: n(total.rows[0].bruto),
-      pedidos: lista.rows.map((r) => Object.assign({}, r, { total: n(r.total), liquido: r.liquido == null ? null : n(r.liquido), taxas: r.taxas == null ? null : n(r.taxas) })),
+      pedidos: await comCusto(lista.rows.map(numeros)),
     });
   } catch (e) {
     falhou(res, e);
@@ -231,7 +247,59 @@ app.get('/api/pedidos/:numero', async (req, res) => {
       ? await banco.q('SELECT count(*)::int AS n, coalesce(sum(total), 0) AS total FROM fin_pedidos WHERE pago AND lower(email) = lower($1)', [p.email])
       : { rows: [{ n: 0, total: 0 }] };
     for (const c of ['total', 'subtotal', 'desconto', 'liquido', 'taxas', 'taxa_gateway', 'taxa_plataforma', 'disponivel_valor', 'reserva_valor']) if (p[c] != null) p[c] = n(p[c]);
-    res.json({ ok: true, pedido: p, cliente: { pedidos: outros.rows[0].n, total: n(outros.rows[0].total) } });
+    const cfg = await custos.config();
+    let custo = null;
+    if (p.pago) {
+      const c = (await custos.dosPedidos([p]))[p.numero];
+      custo = Object.assign({ reais: c.yuan * cfg.cotacao, cotacao: cfg.cotacao, conta: hojeBR(p.criado_em) >= cfg.desde, desde: cfg.desde }, c);
+    }
+    res.json({ ok: true, pedido: p, custo, cliente: { pedidos: outros.rows[0].n, total: n(outros.rows[0].total) } });
+  } catch (e) {
+    falhou(res, e);
+  }
+});
+
+app.get('/api/custos/jogos', async (_req, res) => {
+  try {
+    const [jogos, cfg] = await Promise.all([custos.jogosComPreco(), custos.config()]);
+    res.json({ ok: true, jogos, cotacao: cfg.cotacao, desde: cfg.desde, estoque: cfg.estoque });
+  } catch (e) {
+    falhou(res, e);
+  }
+});
+
+app.post('/api/pedidos/:numero/custo', async (req, res) => {
+  try {
+    const numero = String(req.params.numero);
+    const produtos = Array.isArray(req.body && req.body.produtos) ? req.body.produtos.map(Number).filter((x) => x > 0).slice(0, 20) : [];
+    if (!produtos.length) return res.status(400).json({ ok: false, erro: 'Escolha pelo menos um jogo.' });
+    const r = await banco.q('SELECT numero FROM fin_pedidos WHERE numero = $1', [numero]);
+    if (!r.rows[0]) return res.status(404).json({ ok: false, erro: 'Pedido nao encontrado.' });
+    const jogos = await custos.escolher(numero, produtos);
+    banco.registrar('custo_escolhido', { ip: req.ip, numero, jogos: jogos.map((j) => j.nome + ' ' + j.yuan) });
+    res.json({ ok: true, jogos });
+  } catch (e) {
+    falhou(res, e);
+  }
+});
+
+app.delete('/api/pedidos/:numero/custo', async (req, res) => {
+  try {
+    await custos.voltarAoAutomatico(String(req.params.numero));
+    banco.registrar('custo_automatico', { ip: req.ip, numero: String(req.params.numero) });
+    res.json({ ok: true });
+  } catch (e) {
+    falhou(res, e);
+  }
+});
+
+app.put('/api/custos/desde', async (req, res) => {
+  try {
+    const data = String((req.body && req.body.data) || '');
+    if (!dataValida(data)) return res.status(400).json({ ok: false, erro: 'Data invalida.' });
+    await banco.gravarEstado('custo_desde', data);
+    banco.registrar('custo_desde', { ip: req.ip, data });
+    res.json({ ok: true, desde: data });
   } catch (e) {
     falhou(res, e);
   }
@@ -281,6 +349,7 @@ async function iniciar() {
   for (let tentativa = 1; ; tentativa++) {
     try {
       await banco.preparar();
+      await custos.preparar();
       bancoPronto = true;
       console.log('[banco] conectado');
       break;

@@ -9,6 +9,7 @@
  */
 
 const banco = require('./banco');
+const custos = require('./custos');
 
 const FUSO = 'America/Sao_Paulo';
 const PLATAFORMAS = ['Nintendo', 'Steam', 'PlayStation'];
@@ -55,10 +56,16 @@ async function totais(de, ate, f, corte) {
        FROM base`,
     args,
   );
-  const d = await banco.q("SELECT coalesce(sum(valor), 0) AS total FROM fin_despesas WHERE tipo = 'despesa' AND data BETWEEN $1 AND $2", [de, ate]);
+  const [d, custo, compra] = await Promise.all([
+    banco.q("SELECT coalesce(sum(valor), 0) AS total FROM fin_despesas WHERE tipo = 'despesa' AND data BETWEEN $1 AND $2", [de, ate]),
+    custos.doPeriodo(de, ate, f, cte(!!corte), corte),
+    custos.compraDeContas(de, ate),
+  ]);
   const t = r.rows[0];
   const liquido = n(t.liquido);
-  const despesas = f.plataforma || f.metodo ? 0 : n(d.rows[0].total);
+  const filtrado = !!(f.plataforma || f.metodo);
+  const despesas = filtrado ? 0 : n(d.rows[0].total);
+  const outrasDespesas = filtrado ? 0 : despesas - compra.total;
   return {
     pagos: t.pagos,
     criados: t.criados,
@@ -74,7 +81,10 @@ async function totais(de, ate, f, corte) {
     ticket: t.pagos ? n(t.bruto) / t.pagos : 0,
     conversao: t.criados ? t.pagos / t.criados : 0,
     despesas,
-    lucro: liquido - despesas,
+    custo: { reais: custo.reais, yuan: custo.yuan, pedidos: custo.pedidos, semCusto: custo.semCusto, desde: custo.desde, cotacao: custo.cotacao, estoque: custo.estoque },
+    compraContas: filtrado ? 0 : compra.total,
+    outrasDespesas,
+    lucro: liquido - custo.reais - outrasDespesas,
   };
 }
 
@@ -95,16 +105,26 @@ async function serieDiaria(de, ate, f) {
     "SELECT to_char(data, 'YYYY-MM-DD') AS dia, sum(valor) AS total FROM fin_despesas WHERE tipo = 'despesa' AND data BETWEEN $1 AND $2 GROUP BY 1",
     [de, ate],
   );
+  const [custo, compra] = await Promise.all([custos.doPeriodo(de, ate, f, cte(false)), custos.compraDeContas(de, ate)]);
+  const filtrado = !!(f.plataforma || f.metodo);
   const porDia = {};
-  for (const x of desp.rows) porDia[x.dia] = n(x.total);
-  return r.rows.map((x) => ({ dia: x.dia, bruto: n(x.bruto), liquido: n(x.liquido), pedidos: x.pedidos, criados: x.criados, despesas: f.plataforma || f.metodo ? 0 : porDia[x.dia] || 0 }));
+  for (const x of desp.rows) porDia[x.dia] = n(x.total) - (compra.porDia[x.dia] || 0);
+  return r.rows.map((x) => ({
+    dia: x.dia,
+    bruto: n(x.bruto),
+    liquido: n(x.liquido),
+    pedidos: x.pedidos,
+    criados: x.criados,
+    despesas: filtrado ? 0 : porDia[x.dia] || 0,
+    custo: custo.porDia[x.dia] || 0,
+  }));
 }
 
 async function resumo(p, f, hoje) {
   const mesmoHorario = p.ate === hoje;
   const corte = mesmoHorario ? new Date(Date.now() - p.dias * 86400000) : null;
   const args = [p.de, p.ate, f.plataforma, f.metodo];
-  const [atual, anterior, serie, serieAnterior, porMetodo, porCategoria, topJogos, calor, despesasCat, clientes] = await Promise.all([
+  const [atual, anterior, serie, serieAnterior, porMetodo, porCategoria, topJogos, calor, despesasCat, clientes, conferencia] = await Promise.all([
     totais(p.de, p.ate, f),
     totais(p.antesDe, p.antesAte, f, corte),
     serieDiaria(p.de, p.ate, f),
@@ -146,6 +166,7 @@ async function resumo(p, f, hoje) {
          FROM (SELECT DISTINCT lower(email) AS e FROM base WHERE pago AND email <> '') x JOIN primeiro pr ON pr.e = x.e`,
       args,
     ),
+    custos.conferencia(p.de, p.ate),
   ]);
   const num = (rows, campos) => rows.map((r) => Object.assign({}, r, Object.fromEntries(campos.map((c) => [c, n(r[c])]))));
   return {
@@ -161,6 +182,7 @@ async function resumo(p, f, hoje) {
     calor: num(calor.rows, ['bruto']),
     despesasCat: num(despesasCat.rows, ['total']),
     clientes: clientes.rows[0],
+    conferencia,
   };
 }
 

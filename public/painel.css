@@ -327,7 +327,7 @@ button.linha:hover { background: var(--cartao-2); }
 .linha .meta { display: block; color: var(--suave); font-size: 12.5px; margin-top: 3px; overflow-wrap: anywhere; }
 .valor-lado { text-align: right; flex: none; }
 .valor-lado b { display: block; font-variant-numeric: tabular-nums; font-size: 14px; }
-.valor-lado small { color: var(--fraco); font-size: 12px; }
+.valor-lado small { display: block; color: var(--fraco); font-size: 12px; }
 .lanc .valor-lado { font-weight: 700; }
 .lanc .valor-lado.despesa { color: var(--vermelho); }
 .lanc .valor-lado.retirada { color: var(--ambar); }
@@ -515,3 +515,26 @@ button.linha:hover { background: var(--cartao-2); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* custo dos jogos no fornecedor */
+.cartao-g .conta-lucro { margin-bottom: 12px; }
+.mini-kpis b.negativo { color: var(--vermelho); }
+.conta-lucro .total-lucro { background: var(--azul-fundo) !important; }
+.conta-lucro .total-lucro b { font-size: 22px; }
+.conta-lucro small .delta { margin-right: 4px; }
+.alerta-custo { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin-bottom: 10px; border-radius: var(--raio-p); background: var(--ambar-fundo); color: var(--ambar); border: 0; font-size: 13.5px; font-weight: 600; text-align: left; }
+.alerta-custo span { white-space: nowrap; }
+.cartao-g .ajuda + .ajuda { margin-top: 6px; }
+.sem-custo { color: var(--ambar) !important; font-weight: 600; }
+.acoes-custo { display: grid; gap: 8px; margin-bottom: 16px; }
+.escolhidos { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.total-escolha { margin-left: auto; font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+.lista-jogos { display: grid; gap: 6px; max-height: max(200px, calc(92dvh - 470px)); overflow-y: auto; overscroll-behavior: contain; }
+.jogo-escolha { display: grid; grid-template-columns: 1fr 44px; gap: 6px; }
+.jogo-escolha > button { min-height: 44px; border-radius: var(--raio-p); background: var(--cartao-2); border: 1px solid var(--linha); color: var(--texto); font-size: 13.5px; }
+.jogo-escolha > button:first-child { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; text-align: left; }
+.jogo-escolha > button:first-child span { min-width: 0; overflow-wrap: anywhere; }
+.jogo-escolha small { color: var(--suave); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.jogo-escolha.ativo > button:first-child { border-color: var(--azul); background: var(--azul-fundo); color: var(--azul); font-weight: 600; }
+.mais-um { font-weight: 700; }
+@media (min-width: 760px) { .cartao-g .conta-lucro { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; } }
