@@ -1,0 +1,9 @@
+# Nunca subir: certificados e chaves do banco, senhas e dependencias
+certificados/
+*.key
+*.pem
+*.crt
+*-acesso.txt
+.env
+node_modules/
+*.zip
